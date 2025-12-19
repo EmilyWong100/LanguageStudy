@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>日文學習助手 Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+    <style>
+        .card-preview { border: 2px dashed #e2e8f0; border-radius: 16px; aspect-ratio: 3/4; }
+        #editor-container { height: 150px; background: white; }
+        
+        /* 測驗模式卡片翻轉動畫 */
+        .flip-card { perspective: 1000px; width: 100%; height: 350px; cursor: pointer; }
+        .flip-card-inner {
+            position: relative; width: 100%; height: 100%;
+            text-align: center; transition: transform 0.6s;
+            transform-style: preserve-3d;
+        }
+        .flip-card.flipped .flip-card-inner { transform: rotateY(180deg); }
+        .flip-card-front, .flip-card-back {
+            position: absolute; width: 100%; height: 100%;
+            backface-visibility: hidden; border-radius: 24px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .flip-card-back { transform: rotateY(180deg); background: #f8fafc; border: 2px solid #3b82f6; }
+        .flip-card-front { background: white; border: 2px solid #e2e8f0; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans mb-10">
+
+    <nav class="bg-white border-b px-4 py-4 flex justify-between items-center sticky top-0 z-50">
+        <button id="btn-back" onclick="goBack()" class="text-blue-500 font-medium hidden">〈 返回</button>
+        <h1 id="nav-title" class="text-lg font-bold">單字類別</h1>
+        <div class="flex gap-4">
+            <button id="btn-quiz" onclick="startQuiz()" class="text-green-500 text-2xl hidden">▶</button>
+            <button id="btn-action" onclick="handleMainAction()" class="text-blue-500 text-3xl leading-none">+</button>
+        </div>
+    </nav>
+
+    <main id="app-content" class="p-4 max-w-md mx-auto"></main>
+
+    <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
+
+    <script>
+        // --- 資料與狀態 ---
+        let categories = JSON.parse(localStorage.getItem('jp_cats')) || [{ id: 1, name: 'N4動詞' }];
+        let words = JSON.parse(localStorage.getItem('jp_words')) || [];
+        let currentView = 'home'; 
+        let currentCatId = null;
+        let quizList = [];
+        let quizIdx = 0;
+        let quizMode = 'jp'; // 'jp' 為題目日文, 'cn' 為題目中文
+        let quill;
+
+        // --- 視圖渲染器 ---
+
+        function renderHome() {
+            currentView = 'home';
+            document.getElementById('nav-title').innerText = '單字類別';
+            document.getElementById('btn-back').classList.add('hidden');
+            document.getElementById('btn-quiz').classList.add('hidden');
+            document.getElementById('btn-action').innerText = '+';
+            
+            let html = `<div class="grid grid-cols-1 gap-4">`;
+            categories.forEach(cat => {
+                html += `
+                    <div onclick="viewWords(${cat.id}, '${cat.name}')" class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
+                        <div class="flex items-center gap-3">
+                            <span class="text-2xl">📁</span>
+                            <div>
+                                <div class="font-bold">${cat.name}</div>
+                                <div class="text-xs text-gray-400">${words.filter(w => w.catId === cat.id).length} 個單字</div>
+                            </div>
+                        </div>
+                        <button onclick="deleteCategory(event, ${cat.id})" class="text-red-300 hover:text-red-500 p-2 text-sm">刪除</button>
+                    </div>`;
+            });
+            html += `</div>`;
+            document.getElementById('app-content').innerHTML = html;
+        }
+
+        function viewWords(catId, catName) {
+            currentView = 'wordList';
+            currentCatId = catId;
+            document.getElementById('nav-title').innerText = catName;
+            document.getElementById('btn-back').classList.remove('hidden');
+            document.getElementById('btn-quiz').classList.remove('hidden');
+            document.getElementById('btn-action').innerText = '+';
+            
+            const catWords = words.filter(w => w.catId === catId);
+            let html = `<div class="space-y-3">`;
+            catWords.forEach(w => {
+                html += `
+                    <div class="bg-white p-4 rounded-xl flex justify-between items-center shadow-sm">
+                        <div>
+                            <div class="font-bold text-lg">${w.kanji}</div>
+                            <div class="text-sm text-gray-500">${w.chinese}</div>
+                        </div>
+                        <button onclick="deleteWord(${w.id})" class="text-red-300 text-xs">刪除</button>
+                    </div>`;
+            });
+            html += `</div>`;
+            document.getElementById('app-content').innerHTML = html;
+        }
+
+        // --- 測驗功能 (翻轉卡片) ---
+
+        function startQuiz() {
+            quizList = words.filter(w => w.catId === currentCatId);
+            if (quizList.length === 0) return alert("這個資料夾沒有單字可以測驗！");
+            quizIdx = 0;
+            renderQuiz();
+        }
+
+        function renderQuiz() {
+            currentView = 'quiz';
+            document.getElementById('nav-title').innerText = `測驗中 (${quizIdx + 1}/${quizList.length})`;
+            document.getElementById('btn-quiz').classList.add('hidden');
+            document.getElementById('btn-action').innerText = '結束';
+
+            const word = quizList[quizIdx];
+            const question = quizMode === 'jp' ? word.kanji : word.chinese;
+
+            document.getElementById('app-content').innerHTML = `
+                <div class="flex flex-col items-center gap-6">
+                    <div class="flex bg-gray-200 p-1 rounded-lg w-full">
+                        <button onclick="toggleQuizMode('jp')" class="flex-1 py-1 rounded-md ${quizMode==='jp'?'bg-white shadow':''}">日→中</button>
+                        <button onclick="toggleQuizMode('cn')" class="flex-1 py-1 rounded-md ${quizMode==='cn'?'bg-white shadow':''}">中→日</button>
+                    </div>
+
+                    <div class="flip-card" id="quiz-card" onclick="this.classList.toggle('flipped')">
+                        <div class="flip-card-inner">
+                            <div class="flip-card-front">
+                                <span class="text-xs text-gray-300 mb-4 uppercase tracking-widest">Question</span>
+                                <div class="text-4xl font-bold">${question}</div>
+                                <div class="text-gray-400 mt-10 text-sm">點擊翻面查看答案</div>
+                            </div>
+                            <div class="flip-card-back">
+                                <span class="text-xs text-blue-300 mb-4 uppercase tracking-widest">Answer</span>
+                                <div class="text-sm text-gray-400">${word.furi}</div>
+                                <div class="text-3xl font-bold mb-4">${word.kanji}</div>
+                                <div class="text-xl text-blue-600 font-medium border-t border-blue-100 pt-4 w-2/3">${word.chinese}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-4 w-full">
+                        <button onclick="prevQuiz()" class="flex-1 bg-white border border-gray-200 py-3 rounded-xl">上一個</button>
+                        <button onclick="nextQuiz()" class="flex-1 bg-blue-500 text-white py-3 rounded-xl font-bold">下一個</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function toggleQuizMode(mode) {
+            quizMode = mode;
+            renderQuiz();
+        }
+
+        function nextQuiz() {
+            if (quizIdx < quizList.length - 1) { quizIdx++; renderQuiz(); } 
+            else { alert("測驗結束！"); goBack(); }
+        }
+
+        function prevQuiz() {
+            if (quizIdx > 0) { quizIdx--; renderQuiz(); }
+        }
+
+        // --- 刪除邏輯 ---
+
+        function deleteCategory(event, id) {
+            event.stopPropagation(); // 防止觸發進入資料夾
+            if (confirm("確定要刪除整個資料夾嗎？資料夾內的單字也會一併消失。")) {
+                categories = categories.filter(c => c.id !== id);
+                words = words.filter(w => w.catId !== id);
+                saveData();
+                renderHome();
+            }
+        }
+
+        function deleteWord(id) {
+            if (confirm("確定要刪除這個單字嗎？")) {
+                words = words.filter(w => w.id !== id);
+                saveData();
+                viewWords(currentCatId, document.getElementById('nav-title').innerText);
+            }
+        }
+
+        // --- 基礎邏輯 (同前次，稍作修改以支援 Quiz) ---
+
+        function handleMainAction() {
+            if (currentView === 'home') {
+                const name = prompt("請輸入新類別名稱：");
+                if (name) { categories.push({ id: Date.now(), name: name }); saveData(); renderHome(); }
+            } else if (currentView === 'wordList') {
+                renderEditPage();
+            } else if (currentView === 'quiz' || currentView === 'editWord') {
+                if (currentView === 'editWord') saveNewWord();
+                else goBack();
+            }
+        }
+		
+		function renderEditPage() {
+		currentView = 'editWord';
+			 // ... (導航欄設定同前) ...
+			document.getElementById('app-content').innerHTML = `
+        <div class="space-y-6 pb-10">
+            <div class="flex gap-3">
+                <div class="card-preview flex-1 bg-white p-4 flex flex-col items-center justify-center relative">
+                    <span class="text-[10px] text-gray-300 absolute top-2 left-2">正面</span>
+                    <div id="pv-kanji" class="text-2xl font-bold">---</div>
+                </div>
+                <div class="card-preview flex-1 bg-white p-4 flex flex-col items-center justify-center relative text-center">
+                    <span class="text-[10px] text-gray-300 absolute top-2 left-2">反面</span>
+                    <div id="pv-kanji2" class="text-2xl font-bold mb-2">---</div>
+                    <div id="pv-chinese" class="text-sm text-blue-500 border-t border-blue-100 pt-2 w-full">---</div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl p-5 shadow-sm space-y-4">
+                <div class="bg-blue-50 p-3 rounded-lg mb-2">
+                    <p class="text-xs text-blue-600 font-bold">💡 小技巧：</p>
+                    <p class="text-[11px] text-blue-500">輸入「漢字[音標]」會自動標注。例如：選[えら]ぶ</p>
+                </div>
+                
+                <div>
+                    <label class="text-xs text-gray-400 font-bold ml-1">日文內容</label>
+                    <input type="text" id="in-kanji" oninput="updatePreview()" 
+                        class="w-full text-lg border-b-2 border-gray-100 py-2 focus:border-blue-500 outline-none transition" 
+                        placeholder="例如：選[えら]ぶ">
+                </div>
+                
+                <div>
+                    <label class="text-xs text-gray-400 font-bold ml-1">中文翻譯</label>
+                    <input type="text" id="in-chinese" oninput="updatePreview()" 
+                        class="w-full text-lg border-b-2 border-gray-100 py-2 focus:border-blue-500 outline-none transition" 
+                        placeholder="例如：挑選">
+                </div>
+
+                <div>
+                    <label class="text-xs text-gray-400 font-bold ml-1">備註說明</label>
+                    <div id="editor-container" class="mt-2 rounded-lg"></div>
+                </div>
+            </div>
+        </div>
+		`;
+			// 初始化 Quill ...
+			quill = new Quill('#editor-container', { theme: 'snow', modules: { toolbar: [['bold', { 'color': [] }], ['image']] } });
+		}
+
+        function saveNewWord() {
+            const word = {
+                id: Date.now(), catId: currentCatId,
+                kanji: document.getElementById('in-kanji').value,
+                furi: document.getElementById('in-furi').value,
+                chinese: document.getElementById('in-chinese').value,
+                notes: quill.root.innerHTML
+            };
+            words.push(word); saveData();
+            viewWords(currentCatId, categories.find(c => c.id === currentCatId).name);
+        }
+
+        function updatePreview() {
+            let kanjiInput = document.getElementById('in-kanji').value || '---';
+			const chinese = document.getElementById('in-chinese').value || '---';
+			
+			// 1. 處理 [音標] 格式：將 漢字[音標] 轉換為 <ruby> 標籤
+			// 正規表示式解釋：尋找「非中括號文字」後接著「[中括號內的文字]」
+			const furiganaRegex = /([^\[\]\s]+)\[([^\[\]\s]+)\]/g;
+			
+			// 轉換為 Ruby 標籤格式，用於反面預覽
+			const rubyHtml = kanjiInput.replace(furiganaRegex, '<ruby>$1<rt class="text-[10px] text-gray-400">$2</rt></ruby>');
+    
+			// 清除音標後的純文字，用於正面預覽 (只顯示漢字部分)
+			const plainKanji = kanjiInput.replace(furiganaRegex, '$1');
+			
+			// 2. 更新 DOM 元素
+			document.getElementById('pv-kanji').innerHTML = plainKanji;   // 正面：只顯示漢字
+			document.getElementById('pv-furi').innerHTML = '注音模式已開啟'; // 提示文字
+			document.getElementById('pv-kanji2').innerHTML = rubyHtml;   // 反面：顯示漢字+上方音標
+			document.getElementById('pv-chinese').innerText = chinese;
+
+        }
+
+        function saveData() {
+            localStorage.setItem('jp_cats', JSON.stringify(categories));
+            localStorage.setItem('jp_words', JSON.stringify(words));
+        }
+
+        function goBack() {
+            if (currentView === 'editWord' || currentView === 'quiz') viewWords(currentCatId, categories.find(c => c.id === currentCatId).name);
+            else renderHome();
+        }
+
+        renderHome();
+    </script>
+</body>
+</html>
